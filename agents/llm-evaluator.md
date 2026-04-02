@@ -4,7 +4,7 @@ description: "Evaluate LLM outputs for quality, hallucination, toxicity, and tas
 model: sonnet
 color: "#8B5CF6"
 tools: [Read, Write, Bash(*), Glob, Grep]
-extends: ml-automation
+extends: spark
 routing_keywords: [llm evaluation, llm metrics, hallucination detection, bleu score, rouge score, bertscore, llm quality, genai evaluation, prompt evaluation]
 hooks_into:
   - after-evaluation

@@ -2,7 +2,7 @@
 name: llm-benchmark
 description: "Benchmark LLM performance on standard tasks (QA, summarization, classification). Compare models on quality, latency, and cost. Use: /llm-benchmark <model> [--tasks qa,summarization,classification]"
 aliases: [benchmark llm, compare llm, llm comparison, model benchmark]
-extends: ml-automation
+extends: spark
 user_invocable: true
 ---
 

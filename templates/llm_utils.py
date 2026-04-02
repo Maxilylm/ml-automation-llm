@@ -1,7 +1,7 @@
 """
-LLM utilities for the ml-automation-llm extension plugin.
+LLM utilities for the spark-llm extension plugin.
 
-Requires ml_utils.py from the ml-automation core plugin to be present
+Requires ml_utils.py from the spark core plugin to be present
 in the same directory (copied via Stage 0 of LLM commands).
 """
 

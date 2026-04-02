@@ -4,7 +4,7 @@ description: "Build and optimize Retrieval-Augmented Generation pipelines. Docum
 model: sonnet
 color: "#6D28D9"
 tools: [Read, Write, Bash(*), Glob, Grep]
-extends: ml-automation
+extends: spark
 routing_keywords: [rag, retrieval augmented generation, vector store, embeddings, document chunking, semantic search, knowledge base, rag pipeline]
 ---
 

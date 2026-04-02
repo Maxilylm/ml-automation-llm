@@ -2,7 +2,7 @@
 name: rag-build
 description: "Build a RAG pipeline from documents. Chunking, embedding, vector store setup, retrieval evaluation, and end-to-end testing. Use: /rag-build <documents_path> [--vector-store chroma|faiss|pinecone] [--chunk-size 512]"
 aliases: [rag pipeline, rag setup, vector store, knowledge base build]
-extends: ml-automation
+extends: spark
 user_invocable: true
 ---
 

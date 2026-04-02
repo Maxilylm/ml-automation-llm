@@ -1,4 +1,4 @@
-# ml-automation-llm
+# spark-llm
 
 LLM and GenAI automation extension for [ml-automation](https://github.com/Maxilylm/ml-automation-core).
 
@@ -11,7 +11,7 @@ LLM and GenAI automation extension for [ml-automation](https://github.com/Maxily
 ## Installation
 
 ```bash
-claude plugin add /path/to/ml-automation-llm
+claude plugin add /path/to/spark-llm
 ```
 
 ## What's Included

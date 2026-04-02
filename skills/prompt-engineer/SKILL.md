@@ -2,7 +2,7 @@
 name: prompt-engineer
 description: "Systematic prompt optimization workflow. Design, iterate, and A/B test prompts with tracked metrics per version. Use: /prompt-engineer <task_description> [--model claude|gpt] [--iterations 5]"
 aliases: [optimize prompt, prompt design, prompt iteration, prompt test]
-extends: ml-automation
+extends: spark
 user_invocable: true
 ---
 

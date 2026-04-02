@@ -2,7 +2,7 @@
 name: llm-deploy
 description: "Deploy LLM applications as API endpoints, Streamlit chat UIs, or Docker containers. Includes health checks and monitoring setup. Use: /llm-deploy [--target api|streamlit|docker]"
 aliases: [deploy llm, llm api, llm serve, genai deploy]
-extends: ml-automation
+extends: spark
 user_invocable: true
 ---
 

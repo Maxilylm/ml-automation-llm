@@ -2,7 +2,7 @@
 name: llm-evaluate
 description: "Evaluate LLM outputs with standard metrics (BLEU, ROUGE, BERTScore, faithfulness, hallucination detection). Supports reference-based and reference-free evaluation. Use: /llm-evaluate <predictions_file> [--reference <ref>] [--metrics bleu,rouge,bertscore]"
 aliases: [eval llm, llm metrics, llm quality, genai eval]
-extends: ml-automation
+extends: spark
 user_invocable: true
 ---
 

@@ -2,7 +2,7 @@
 name: llm-finetune
 description: "Prepare data and configure fine-tuning jobs for LLMs. Dataset formatting, validation, training configuration, and job monitoring. Use: /llm-finetune <dataset> --base-model <model> [--method lora|full]"
 aliases: [finetune llm, fine-tune, lora, llm training]
-extends: ml-automation
+extends: spark
 user_invocable: true
 ---
 
