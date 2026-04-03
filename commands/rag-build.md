@@ -97,29 +97,73 @@ When using domain chunking, call `build_structured_chunks()` from `llm_utils` to
    - **NDCG@10** (Normalized Discounted Cumulative Gain)
 4. Report: retrieval metrics table, failure cases
 
-### Stage 5.5: Code Sandbox Setup
+### Stage 5.5: Tool-Augmented RAG Setup
 
-For data and analytics RAG applications, pure retrieval is insufficient. Stakeholders ask ad-hoc questions that pre-built chunks cannot anticipate — "what's the average age of survivors in first class?" requires computation, not lookup.
+Pure retrieval is insufficient for real-world applications. Users ask questions that need computation, database queries, or external lookups — not just document search. Use `ToolRegistry` from `llm_utils` to give the LLM discrete, safe capabilities.
 
-Generate a **two-pass architecture** in the pipeline:
+#### Tool Registry
 
-1. **Pass 1 — Retrieval + Intent Detection**: LLM receives retrieved context + question and decides whether a direct answer is possible or computation is needed.
-2. **Pass 2 — Sandboxed Computation** (conditional): If code is needed, LLM generates Python, the sandbox executes it against the data, and results are sent back for a stakeholder-friendly answer.
+1. Create a `ToolRegistry` and register domain-specific tools:
+   ```python
+   from llm_utils import ToolRegistry
 
-Use `create_sandbox()` and `execute_sandboxed()` from `llm_utils` to run generated code safely:
-- Sandbox restricts builtins to safe operations — no file I/O, no imports beyond explicitly allowed modules, no `eval`/`exec`
-- DataFrame is deep-copied before execution so generated code cannot mutate the source data
+   registry = ToolRegistry()
 
-> **Latency note:** Two sequential LLM calls add latency. Fast inference providers keep this under 3 seconds. For slower providers, make pass 2 optional and only invoke when pass 1 detects a computation need (look for keywords like "calculate", "average", "compare", "how many").
+   @registry.tool("query_data", "Run a query on the dataset and return results")
+   def query_data(query: str, limit: int = 10) -> dict:
+       result = df.query(query).head(limit)
+       return {"rows": len(result), "data": result.to_dict("records")}
+
+   @registry.tool("compute_stats", "Compute statistics for a column")
+   def compute_stats(column: str) -> dict:
+       return {"mean": df[column].mean(), "median": df[column].median(), ...}
+
+   @registry.tool("search_docs", "Search the knowledge base")
+   def search_docs(question: str, k: int = 5) -> list:
+       # uses search_in_memory() under the hood
+       return retrieve(question, k)
+   ```
+
+2. Export schemas for the LLM:
+   - For models with native function-calling: `registry.get_schemas(format="openai")`
+   - For models without: `registry.get_tool_descriptions()` → inject into system prompt
+
+3. Parse tool calls from LLM output with `parse_tool_calls()` — handles JSON blocks, XML tags, and function-call syntax.
+
+#### Agentic Tool Loop
+
+For complex questions, use `run_tool_loop()` — the LLM decides which tool to call, the framework executes it, and feeds the result back for the next turn. Repeats until the LLM produces a final answer.
+
+```python
+from llm_utils import run_tool_loop
+
+result = run_tool_loop(
+    registry=registry,
+    llm_call=my_llm_function,  # any provider — just needs (messages, tools=None) -> str
+    messages=[{"role": "user", "content": "What's the average age of 1st class survivors?"}],
+    max_iterations=5,
+)
+print(result["final_response"])  # stakeholder-friendly answer
+print(result["tool_calls"])      # audit trail of what tools were used
+```
+
+#### Code Sandbox (Fallback)
+
+For ad-hoc computation that doesn't fit a named tool, include a `run_code` tool backed by `create_sandbox()` + `execute_sandboxed()`:
+- Restricts builtins to safe operations — no file I/O, no network, no imports beyond allowed list
+- DataFrame is deep-copied before execution
+- Captured output + errors returned to LLM for formatting
+
+> **Design principle:** Prefer named tools over raw code execution. Named tools have clear schemas, are easier to audit, and give the LLM a better signal of what's available. Use the code sandbox as a fallback for truly novel queries.
 
 ### Stage 6: Pipeline Assembly
 
 1. Generate `src/rag_pipeline.py` with:
    - `ingest(documents_path)` — load, chunk, embed, index
    - `search(question, k=5)` — uses in-memory search by default, falls back to configured vector DB
-   - `compute(question, context, dataframe=None)` — two-pass with optional code execution via sandbox (see Stage 5.5)
+   - `setup_tools(df=None)` — create ToolRegistry with domain-specific tools (query_data, compute_stats, search_docs, and optionally run_code)
    - `generate(question, context)` — call LLM with retrieved context (provider-agnostic)
-   - `rag(question)` — end-to-end: search + compute (if needed) + generate
+   - `rag(question)` — end-to-end: search → tool loop (if tools registered) → generate final answer
 2. Generate `src/rag_config.json` with all configuration parameters
 3. Generate basic test script `tests/test_rag.py`
 

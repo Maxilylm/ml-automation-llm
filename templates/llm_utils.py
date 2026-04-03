@@ -575,6 +575,368 @@ def execute_sandboxed(code: str, sandbox: dict,
         }
 
 
+# --- Tool Registry & Execution ---
+
+class ToolRegistry:
+    """Provider-agnostic tool registry for LLM applications.
+
+    Define tools once, expose them to any LLM via standardized schemas.
+    The registry handles: tool registration, schema generation (for the LLM),
+    argument validation, safe execution, and result formatting.
+
+    This is the core building block for giving LLMs capabilities beyond
+    text generation — data queries, computations, API calls, file operations.
+
+    Usage:
+        registry = ToolRegistry()
+
+        @registry.tool("query_data", "Run a pandas query on the dataset")
+        def query_data(query: str, columns: list = None) -> dict:
+            result = df.query(query)
+            return {"rows": len(result), "data": result.to_dict()}
+
+        # Get schemas for LLM function-calling
+        schemas = registry.get_schemas()
+
+        # Execute a tool call from the LLM
+        result = registry.execute("query_data", {"query": "age > 30"})
+    """
+
+    def __init__(self):
+        self._tools: Dict[str, Dict[str, Any]] = {}
+
+    def tool(self, name: str, description: str,
+             parameters: Optional[Dict[str, Any]] = None):
+        """Decorator to register a function as an LLM-callable tool.
+
+        Args:
+            name: tool name (what the LLM will call)
+            description: what the tool does (included in LLM schema)
+            parameters: JSON Schema for parameters. If None, auto-inferred
+                       from function signature.
+        """
+        def decorator(func):
+            param_schema = parameters
+            if param_schema is None:
+                param_schema = self._infer_schema(func)
+
+            self._tools[name] = {
+                "name": name,
+                "description": description,
+                "parameters": param_schema,
+                "function": func,
+            }
+            return func
+        return decorator
+
+    def register(self, name: str, description: str, func,
+                 parameters: Optional[Dict[str, Any]] = None):
+        """Register a tool without using the decorator pattern.
+
+        Useful for registering lambdas, methods, or third-party functions.
+        """
+        param_schema = parameters or self._infer_schema(func)
+        self._tools[name] = {
+            "name": name,
+            "description": description,
+            "parameters": param_schema,
+            "function": func,
+        }
+
+    def _infer_schema(self, func) -> Dict[str, Any]:
+        """Infer a basic JSON Schema from function signature."""
+        import inspect
+        sig = inspect.signature(func)
+        properties = {}
+        required = []
+
+        type_map = {
+            str: "string", int: "integer", float: "number",
+            bool: "boolean", list: "array", dict: "object",
+        }
+
+        for param_name, param in sig.parameters.items():
+            if param_name in ("self", "cls"):
+                continue
+            annotation = param.annotation
+            param_type = "string"  # default
+            if annotation != inspect.Parameter.empty and annotation in type_map:
+                param_type = type_map[annotation]
+
+            properties[param_name] = {"type": param_type}
+
+            if param.default is inspect.Parameter.empty:
+                required.append(param_name)
+
+        schema = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
+
+    def get_schemas(self, format: str = "openai") -> List[Dict[str, Any]]:
+        """Export tool schemas for LLM consumption.
+
+        Args:
+            format: schema format. Options:
+                - 'openai': OpenAI/Anthropic function-calling format
+                - 'raw': plain dict with name, description, parameters
+
+        Returns:
+            list of tool schema dicts
+        """
+        schemas = []
+        for tool in self._tools.values():
+            if format == "openai":
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool["description"],
+                        "parameters": tool["parameters"],
+                    },
+                })
+            else:
+                schemas.append({
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"],
+                })
+        return schemas
+
+    def get_tool_descriptions(self) -> str:
+        """Get a plain-text summary of all tools for inclusion in system prompts.
+
+        Useful for models that don't support native function-calling —
+        include this in the system prompt and parse tool calls from the output.
+        """
+        lines = ["Available tools:\n"]
+        for tool in self._tools.values():
+            params = tool["parameters"].get("properties", {})
+            param_str = ", ".join(
+                f"{k}: {v.get('type', 'any')}" for k, v in params.items()
+            )
+            lines.append(f"  {tool['name']}({param_str})")
+            lines.append(f"    {tool['description']}\n")
+        return "\n".join(lines)
+
+    def execute(self, tool_name: str,
+                arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a tool by name with the given arguments.
+
+        Args:
+            tool_name: name of the registered tool
+            arguments: dict of argument name → value
+
+        Returns:
+            dict with 'success', 'result', 'error', 'tool_name'
+        """
+        if tool_name not in self._tools:
+            return {
+                "success": False,
+                "result": None,
+                "error": f"Unknown tool: {tool_name}. Available: {list(self._tools.keys())}",
+                "tool_name": tool_name,
+            }
+
+        tool = self._tools[tool_name]
+        try:
+            result = tool["function"](**arguments)
+            return {
+                "success": True,
+                "result": result,
+                "error": None,
+                "tool_name": tool_name,
+            }
+        except TypeError as e:
+            return {
+                "success": False,
+                "result": None,
+                "error": f"Invalid arguments for {tool_name}: {e}",
+                "tool_name": tool_name,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "result": None,
+                "error": f"{type(e).__name__}: {e}",
+                "tool_name": tool_name,
+            }
+
+    def list_tools(self) -> List[str]:
+        """Return names of all registered tools."""
+        return list(self._tools.keys())
+
+    def has_tool(self, name: str) -> bool:
+        return name in self._tools
+
+
+def parse_tool_calls(llm_output: str) -> List[Dict[str, Any]]:
+    """Parse tool calls from LLM text output (for models without native function-calling).
+
+    Looks for tool calls in these formats:
+    - JSON block: ```tool\n{"name": "tool_name", "arguments": {...}}\n```
+    - Inline: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+    - Function-style: tool_name(arg1="val1", arg2="val2")
+
+    Args:
+        llm_output: raw text output from the LLM
+
+    Returns:
+        list of dicts with 'name' and 'arguments' keys
+    """
+    calls = []
+
+    # Pattern 1: JSON in fenced code block
+    json_blocks = re.findall(
+        r'```(?:tool|json)?\s*\n(\{[^`]+\})\s*\n```',
+        llm_output, re.DOTALL
+    )
+    for block in json_blocks:
+        try:
+            parsed = json.loads(block)
+            if "name" in parsed:
+                calls.append({
+                    "name": parsed["name"],
+                    "arguments": parsed.get("arguments", parsed.get("params", {})),
+                })
+        except json.JSONDecodeError:
+            continue
+
+    # Pattern 2: XML-style tags
+    tag_matches = re.findall(
+        r'<tool_call>\s*(\{.+?\})\s*</tool_call>',
+        llm_output, re.DOTALL
+    )
+    for match in tag_matches:
+        try:
+            parsed = json.loads(match)
+            if "name" in parsed:
+                calls.append({
+                    "name": parsed["name"],
+                    "arguments": parsed.get("arguments", parsed.get("params", {})),
+                })
+        except json.JSONDecodeError:
+            continue
+
+    # Pattern 3: Function-call style  e.g., query_data(query="age > 30")
+    func_matches = re.findall(
+        r'(\w+)\(([^)]*)\)',
+        llm_output
+    )
+    # Only consider if no JSON calls were found (avoid false positives)
+    if not calls:
+        for func_name, args_str in func_matches:
+            if not args_str.strip():
+                continue
+            # Try to parse key=value pairs
+            try:
+                # Convert key="value" to dict
+                args_dict = {}
+                for pair in re.findall(r'(\w+)\s*=\s*("[^"]*"|\d+\.?\d*|\w+)', args_str):
+                    key, val = pair
+                    # Strip quotes and try type conversion
+                    val = val.strip('"').strip("'")
+                    try:
+                        val = int(val)
+                    except ValueError:
+                        try:
+                            val = float(val)
+                        except ValueError:
+                            if val.lower() == "true":
+                                val = True
+                            elif val.lower() == "false":
+                                val = False
+                    args_dict[key] = val
+                if args_dict:
+                    calls.append({"name": func_name, "arguments": args_dict})
+            except Exception:
+                continue
+
+    return calls
+
+
+def run_tool_loop(registry: 'ToolRegistry',
+                  llm_call,
+                  messages: List[Dict[str, str]],
+                  max_iterations: int = 5) -> Dict[str, Any]:
+    """Run an agentic tool-use loop: LLM decides → tool executes → result fed back.
+
+    This is the core agentic pattern. The LLM sees the conversation + available tools,
+    decides which tool to call (if any), the tool executes, and the result is appended
+    to the conversation for the next LLM turn. Repeats until the LLM produces a final
+    answer without tool calls, or max_iterations is reached.
+
+    Args:
+        registry: ToolRegistry with registered tools
+        llm_call: callable(messages, tools=None) -> str
+            Function that calls any LLM and returns the text response.
+            If the LLM supports native function-calling, tools kwarg
+            receives the schemas. Otherwise, tool descriptions are
+            prepended to the system prompt.
+        messages: conversation history (list of {"role": ..., "content": ...})
+        max_iterations: safety limit on tool-use rounds
+
+    Returns:
+        dict with 'final_response': str, 'tool_calls': list of executed calls,
+        'iterations': int, 'messages': full conversation history
+    """
+    tool_schemas = registry.get_schemas()
+    tool_descriptions = registry.get_tool_descriptions()
+    executed_calls = []
+
+    for iteration in range(max_iterations):
+        # Call LLM
+        try:
+            response = llm_call(messages, tools=tool_schemas)
+        except TypeError:
+            # LLM function doesn't accept tools kwarg — inject into system prompt
+            augmented = list(messages)
+            if augmented and augmented[0]["role"] == "system":
+                augmented[0] = {
+                    "role": "system",
+                    "content": augmented[0]["content"] + "\n\n" + tool_descriptions,
+                }
+            else:
+                augmented.insert(0, {"role": "system", "content": tool_descriptions})
+            response = llm_call(augmented)
+
+        # Check for tool calls in the response
+        calls = parse_tool_calls(response)
+
+        if not calls:
+            # No tool calls — this is the final answer
+            return {
+                "final_response": response,
+                "tool_calls": executed_calls,
+                "iterations": iteration + 1,
+                "messages": messages + [{"role": "assistant", "content": response}],
+            }
+
+        # Execute each tool call
+        tool_results = []
+        for call in calls:
+            result = registry.execute(call["name"], call["arguments"])
+            executed_calls.append({**call, "result": result})
+            tool_results.append(
+                f"Tool `{call['name']}` returned:\n"
+                f"{json.dumps(result['result'], default=str, indent=2) if result['success'] else result['error']}"
+            )
+
+        # Append assistant response and tool results to conversation
+        messages = messages + [
+            {"role": "assistant", "content": response},
+            {"role": "user", "content": "\n\n".join(tool_results)},
+        ]
+
+    # Max iterations reached
+    return {
+        "final_response": "[Max tool iterations reached]",
+        "tool_calls": executed_calls,
+        "iterations": max_iterations,
+        "messages": messages,
+    }
+
+
 # --- Prompt Quality Audit ---
 
 PROMPT_ANTI_PATTERNS = [

@@ -13,7 +13,7 @@ Build a complete Retrieval-Augmented Generation pipeline. Supports three chunkin
 ## When to Use
 
 - You have documents and want a grounded question-answering system.
-- You're building a data/analytics chatbot that needs both retrieval AND computation.
+- You're building a data/analytics chatbot that needs retrieval, computation, AND tool use.
 - You need to choose the right vector backend for your scale (in-memory for small KBs, DB for large).
 - You want domain-structured chunks that each answer one category of question.
 
@@ -37,8 +37,8 @@ For **data/analytics** projects: use `--chunking domain` to build topic-structur
    - `domain`: structured chunks via `build_structured_chunks()` — each chunk maps to one question type. Include both percentages AND raw counts in every statistical chunk.
 4. **Embedding & Indexing** -- Generate embeddings, build index. In-memory backend stores L2-normalized embeddings and uses `search_in_memory()` for cosine similarity.
 5. **Retrieval Evaluation** -- Recall@k, MRR, NDCG@10 via `evaluate_retrieval()`.
-6. **Code Sandbox Setup** -- For analytics RAG: generate two-pass architecture with `create_sandbox()` and `execute_sandboxed()`. Pass 1: LLM decides if computation needed. Pass 2: sandboxed code execution → LLM formats result.
-7. **Pipeline Assembly** -- Generate `rag_pipeline.py` with `search()`, `compute()`, `generate()`, `rag()`.
+6. **Tool-Augmented RAG** -- Register domain-specific tools (query_data, compute_stats, search_docs) via `ToolRegistry`. LLM selects tools, framework executes safely, results fed back. Code sandbox as fallback for ad-hoc queries.
+7. **Pipeline Assembly** -- Generate `rag_pipeline.py` with `search()`, `setup_tools()`, `generate()`, `rag()`.
 8. **Report** -- Save pipeline metadata to report bus.
 
 ## Report Bus Integration
