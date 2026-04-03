@@ -49,12 +49,37 @@ Based on `--target`:
 **Streamlit Chat UI:**
 1. Generate `src/streamlit_app.py`:
    - Chat interface with `st.chat_message` / `st.chat_input`
-   - Conversation history management
    - System prompt configuration sidebar
    - Model parameter controls (temperature, max_tokens, top_p)
    - Token usage display
    - RAG source display (if pipeline exists)
    - Export conversation button
+
+   **Chat state management:**
+   Use the pending_question pattern to prevent duplicate messages from multiple input sources (buttons + chat_input):
+   ```python
+   if "pending_question" not in st.session_state:
+       st.session_state.pending_question = None
+   # Buttons and chat_input both write to pending_question
+   # Single processing point reads and clears it
+   ```
+   Never append directly to chat history from multiple input sources. Funnel everything through a single pending state variable.
+
+   **Caching rules:**
+   - Cache with `@st.cache_resource`: embedding models, numpy arrays, tokenizers, config dicts
+   - NEVER cache: database connections (ChromaDB, SQLite), HTTP client sessions, file handles, anything wrapping an OS file descriptor
+   - Reason: `@st.cache_resource` preserves the Python object but not the OS resources it holds. Cached connections produce "Broken pipe" errors across Streamlit reruns.
+
+   **Vector store for Streamlit:**
+   For RAG-enabled Streamlit apps with < 10K chunks, use in-memory vector search instead of ChromaDB. Call `search_in_memory()` from `llm_utils`. This eliminates SQLite connection state issues entirely.
+
+   **Multi-pass architecture:**
+   For data analytics chatbots, generate a two-pass pipeline:
+   - Pass 1: LLM decides if computation is needed based on the question
+   - Pass 2: If yes, generates code → sandboxed execution → LLM formats result
+
+   This bridges the gap between static RAG and ad-hoc analytical questions. Choose an inference provider with low latency — two sequential calls must stay under the user's patience threshold (~5 seconds).
+
 2. Generate `.streamlit/config.toml` with theme settings
 
 **Docker:**
@@ -87,7 +112,19 @@ Based on `--target`:
      "cors_origins": ["*"]
    }
    ```
-2. Generate `config/model_config.json` with model-specific settings
+2. If target is `streamlit`, add `streamlit_config` block to `deploy_config.json`:
+   ```json
+   "streamlit_config": {
+     "state_management": "pending_question",
+     "cache_resource": ["embedding_models", "numpy_arrays", "tokenizers", "config_dicts"],
+     "never_cache": ["db_connections", "http_sessions", "file_handles"],
+     "vector_store": "in_memory",
+     "vector_store_threshold_chunks": 10000,
+     "multi_pass_enabled": false,
+     "multi_pass_latency_budget_seconds": 5
+   }
+   ```
+3. Generate `config/model_config.json` with model-specific settings
 
 ### Stage 3: Monitoring Setup
 

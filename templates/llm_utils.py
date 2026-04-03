@@ -406,6 +406,284 @@ def _chunk_by_sentence(text: str, chunk_size: int, overlap: int) -> List[str]:
     return chunks
 
 
+# --- Domain-Aware Chunking ---
+
+def build_structured_chunks(facts: Dict[str, Any],
+                            metadata: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
+    """Build domain-aware knowledge chunks where each chunk answers one topic.
+
+    Instead of splitting documents by character count (which dilutes embeddings),
+    this creates purpose-built chunks where each maps to one category of question.
+    Include both percentages and raw counts in numeric facts — LLMs are more
+    confident when context provides multiple representations of the same fact.
+
+    Args:
+        facts: dict where keys are topic names and values are either:
+            - str: a pre-written chunk text
+            - dict: structured data that gets formatted into a chunk
+            - list: items joined with newlines
+        metadata: optional per-chunk metadata (e.g., source, timestamp)
+
+    Returns:
+        list of dicts with 'text', 'topic', 'char_count', 'metadata'
+
+    Example:
+        facts = {
+            "dataset_overview": "891 passengers. Survival rate: 38.4% (342 survived).",
+            "survival_by_sex": {"female": "74.2% (233/314)", "male": "18.9% (109/577)"},
+            "key_factors": ["Sex (strongest predictor)", "Pclass", "Age", "Fare"],
+        }
+    """
+    chunks = []
+    for topic, content in facts.items():
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, dict):
+            lines = [f"{k}: {v}" for k, v in content.items()]
+            text = f"{topic.replace('_', ' ').title()}\n" + "\n".join(lines)
+        elif isinstance(content, list):
+            text = f"{topic.replace('_', ' ').title()}\n" + "\n".join(
+                f"- {item}" if isinstance(item, str) else f"- {item}"
+                for item in content
+            )
+        else:
+            text = str(content)
+
+        chunks.append({
+            "text": text,
+            "topic": topic,
+            "char_count": len(text),
+            "metadata": metadata or {},
+        })
+
+    return chunks
+
+
+# --- In-Memory Vector Search ---
+
+def search_in_memory(query_embedding: List[float],
+                     embeddings: List[List[float]],
+                     k: int = 5) -> List[Dict[str, Any]]:
+    """Cosine similarity search using in-memory dot product.
+
+    For knowledge bases under ~10K chunks, this is faster and more reliable
+    than a vector database. No connection state, no SQLite broken pipes in
+    Streamlit, no external dependencies.
+
+    Embeddings must be L2-normalized (unit vectors) for cosine similarity.
+
+    Args:
+        query_embedding: embedding vector for the query (1D list)
+        embeddings: matrix of chunk embeddings (list of lists or 2D array)
+        k: number of top results to return
+
+    Returns:
+        list of dicts with 'index', 'score' sorted by descending similarity
+    """
+    # Dot product on L2-normalized vectors = cosine similarity
+    scores = []
+    for i, emb in enumerate(embeddings):
+        score = sum(q * e for q, e in zip(query_embedding, emb))
+        scores.append((i, score))
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+    return [{"index": idx, "score": round(score, 4)} for idx, score in scores[:k]]
+
+
+# --- Code Sandbox ---
+
+def create_sandbox(dataframe=None, allowed_modules: Optional[List[str]] = None):
+    """Create a restricted execution sandbox for LLM-generated code.
+
+    The sandbox restricts builtins to safe operations and provides
+    only explicitly allowed objects. The dataframe is copied to prevent
+    state corruption.
+
+    Args:
+        dataframe: optional pandas DataFrame (will be deep-copied)
+        allowed_modules: list of module names to make available
+                        (e.g., ["math", "statistics"]). Defaults to none.
+
+    Returns:
+        dict suitable as globals for exec(), with restricted __builtins__
+    """
+    safe_builtins = {
+        "abs": abs, "all": all, "any": any, "bool": bool,
+        "dict": dict, "enumerate": enumerate, "filter": filter,
+        "float": float, "format": format, "frozenset": frozenset,
+        "int": int, "isinstance": isinstance, "len": len, "list": list,
+        "map": map, "max": max, "min": min, "print": print, "range": range,
+        "reversed": reversed, "round": round, "set": set, "sorted": sorted,
+        "str": str, "sum": sum, "tuple": tuple, "type": type, "zip": zip,
+        "True": True, "False": False, "None": None,
+    }
+
+    sandbox = {"__builtins__": safe_builtins, "_result": None}
+
+    if dataframe is not None:
+        sandbox["df"] = dataframe.copy()
+
+    # Import allowed modules
+    if allowed_modules:
+        import importlib
+        for mod_name in allowed_modules:
+            if mod_name in ("os", "sys", "subprocess", "shutil", "socket"):
+                continue  # never allow system access
+            try:
+                sandbox[mod_name] = importlib.import_module(mod_name)
+            except ImportError:
+                pass
+
+    return sandbox
+
+
+def execute_sandboxed(code: str, sandbox: dict,
+                      timeout_hint: int = 10) -> Dict[str, Any]:
+    """Execute LLM-generated Python code in a restricted sandbox.
+
+    The code runs in the provided sandbox globals. To capture output,
+    the code should assign to `_result`. Prints are captured too.
+
+    Args:
+        code: Python code string to execute
+        sandbox: globals dict from create_sandbox()
+        timeout_hint: advisory timeout in seconds (not enforced at OS level)
+
+    Returns:
+        dict with 'success': bool, 'result': any value assigned to _result,
+        'output': captured print output, 'error': error message if failed
+    """
+    import io
+    import contextlib
+
+    output_buffer = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(output_buffer):
+            exec(code, sandbox)
+        return {
+            "success": True,
+            "result": sandbox.get("_result"),
+            "output": output_buffer.getvalue(),
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "result": None,
+            "output": output_buffer.getvalue(),
+            "error": f"{type(e).__name__}: {e}",
+        }
+
+
+# --- Prompt Quality Audit ---
+
+PROMPT_ANTI_PATTERNS = [
+    {
+        "pattern": r"if (?:the )?context doesn.t contain",
+        "issue": "Overly cautious context instruction",
+        "fix": "Replace with: 'If the context contains the answer, use it directly. "
+               "Only say you don't know when the information is genuinely absent.'",
+    },
+    {
+        "pattern": r"(?:always )?say (?:so )?honestly",
+        "issue": "Vague honesty instruction can cause excessive hedging",
+        "fix": "Be specific about WHEN to hedge. E.g., 'If no data supports the answer, "
+               "say so — but if the context contains relevant numbers, cite them directly.'",
+    },
+    {
+        "pattern": r"you are an? (?:helpful|friendly|knowledgeable)",
+        "issue": "Generic persona adds no value",
+        "fix": "Define the specific role and domain expertise instead. "
+               "E.g., 'You are a data analyst for [project]. You explain metrics in business terms.'",
+    },
+    {
+        "pattern": r"(?:do not|don.t|never) (?:make up|fabricate|invent|hallucinate)",
+        "issue": "Negative instruction without positive alternative",
+        "fix": "Pair with positive guidance: 'Ground every claim in the provided context. "
+               "Cite specific numbers. If data is missing, say what data would be needed.'",
+    },
+    {
+        "pattern": r"be (?:concise|brief|short)",
+        "issue": "Vague length instruction",
+        "fix": "Specify format: 'Answer in 2-3 sentences' or 'Use bullet points, max 5 items'.",
+    },
+]
+
+
+def audit_system_prompt(prompt: str) -> Dict[str, Any]:
+    """Audit a system prompt for common anti-patterns that degrade LLM quality.
+
+    Based on real-world lessons: LLMs take instructions literally. A well-intentioned
+    instruction like 'say so honestly if you don't know' can cause the model to
+    over-hedge and deny having information that IS in the context.
+
+    Args:
+        prompt: the system prompt text to audit
+
+    Returns:
+        dict with 'issues': list of found anti-patterns,
+        'score': quality score 0-100, 'suggestions': list of fixes
+    """
+    issues = []
+    for ap in PROMPT_ANTI_PATTERNS:
+        if re.search(ap["pattern"], prompt, re.IGNORECASE):
+            issues.append({
+                "issue": ap["issue"],
+                "fix": ap["fix"],
+            })
+
+    # Check for positive patterns
+    has_role = bool(re.search(r"you are|your role|as a", prompt, re.IGNORECASE))
+    has_format = bool(re.search(r"format|structure|template|json|bullet|markdown", prompt, re.IGNORECASE))
+    has_examples = bool(re.search(r"example|e\.g\.|for instance|such as", prompt, re.IGNORECASE))
+    has_specifics = bool(re.search(r"\d+|percent|number|count|rate", prompt, re.IGNORECASE))
+
+    # Score: start at 100, deduct for issues, add for good patterns
+    score = max(0, 100 - len(issues) * 15)
+    if has_role:
+        score = min(100, score + 5)
+    if has_format:
+        score = min(100, score + 5)
+    if has_examples:
+        score = min(100, score + 5)
+    if has_specifics:
+        score = min(100, score + 5)
+
+    return {
+        "issues": issues,
+        "score": score,
+        "has_role": has_role,
+        "has_format_guidance": has_format,
+        "has_examples": has_examples,
+        "suggestions": [i["fix"] for i in issues],
+    }
+
+
+# --- Streamlit Integration Helpers ---
+
+STREAMLIT_CACHE_RULES = """
+Streamlit Caching Rules for LLM Applications:
+
+SAFE to cache with @st.cache_resource:
+  - Embedding models (SentenceTransformer, etc.)
+  - Numpy arrays (embeddings matrix)
+  - Plain Python dicts / config objects
+  - Tokenizers
+
+UNSAFE to cache (will break across reruns):
+  - Database connections (ChromaDB PersistentClient, SQLite, Postgres)
+  - HTTP client sessions (requests.Session, httpx.Client)
+  - File handles
+  - Anything wrapping an OS file descriptor or socket
+
+For Streamlit chat applications, use the pending_question pattern:
+  if "pending_question" not in st.session_state:
+      st.session_state.pending_question = None
+  # All input sources write to pending_question
+  # Single processing point reads and clears it
+"""
+
+
 # --- Embedding Index ---
 
 def create_embedding_index(chunks: List[str], model: str = "all-MiniLM-L6-v2",
@@ -415,20 +693,27 @@ def create_embedding_index(chunks: List[str], model: str = "all-MiniLM-L6-v2",
     Args:
         chunks: list of text strings to embed
         model: embedding model name (sentence-transformers or OpenAI)
-        backend: 'faiss' or 'chroma'
+        backend: 'memory' (in-memory cosine, best for <10K chunks),
+                 'faiss' (HNSW index), or 'chroma' (persistent DB).
+                 Use 'memory' in Streamlit apps to avoid SQLite connection
+                 issues. Use search_in_memory() to query the memory backend.
 
     Returns:
-        dict with 'index' (the index object), 'embeddings' (numpy array),
+        dict with 'index' (the index object or None for memory), 'embeddings',
         'model': model name, 'dimension': embedding dimension, 'count': chunk count
     """
     embeddings = _compute_embeddings(chunks, model)
 
-    if backend == "faiss":
+    if backend == "memory":
+        # In-memory search — no external dependencies, no connection state.
+        # Best for <10K chunks. Use search_in_memory() to query.
+        index = None  # no index object needed
+    elif backend == "faiss":
         index = _build_faiss_index(embeddings)
     elif backend == "chroma":
         index = _build_chroma_index(chunks, embeddings, model)
     else:
-        raise ValueError(f"Unknown backend: {backend}")
+        raise ValueError(f"Unknown backend: {backend}. Use 'memory', 'faiss', or 'chroma'.")
 
     return {
         "index": index,

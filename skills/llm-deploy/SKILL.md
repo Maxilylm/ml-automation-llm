@@ -14,16 +14,24 @@ Deploy LLM-powered applications to production. Supports FastAPI/Flask REST endpo
 
 - You have a working LLM application and need to expose it as a REST API or chat interface.
 - You want a containerized deployment with health checks and monitoring out of the box.
-- You need to scaffold a Streamlit demo for stakeholder review or internal testing.
+- You need to scaffold a Streamlit chat app with proper state management and caching.
 - You are preparing a production deployment with logging, rate limiting, and token tracking.
+
+## Streamlit Deployment Patterns
+
+When deploying as a Streamlit chat UI, these patterns prevent common issues:
+- **Chat state**: use the `pending_question` pattern — funnel all input sources (buttons, chat_input) through a single state variable to prevent duplicate messages.
+- **Caching**: cache embedding models with `@st.cache_resource`, but NEVER cache database connections (ChromaDB, SQLite) — they break across Streamlit reruns.
+- **Vector store**: for RAG apps with <10K chunks, use in-memory search (`search_in_memory()`) to avoid SQLite broken pipe errors entirely.
+- **Multi-pass**: for analytics chatbots, use a two-pass architecture (retrieve + optional sandboxed code execution) to handle ad-hoc questions that pre-built chunks can't answer.
 
 ## Workflow
 
-1. **Env Check** -- Detect project structure, verify dependencies (fastapi, streamlit, docker), confirm the LLM integration works locally.
-2. **Application Scaffolding** -- Generate the deployment target code: FastAPI app with `/predict` and `/health` endpoints, Streamlit chat UI, or Dockerfile with multi-stage build. Wire in the existing LLM pipeline.
-3. **Configuration** -- Set up environment variables, rate limiting, CORS, logging format, and token usage tracking. Generate a `.env.example` with required keys.
-4. **Deploy** -- For API: start the server locally and run a smoke test. For Docker: build the image and verify the container starts. For Streamlit: launch the app and confirm the chat interface renders.
-5. **Report** -- Produce a deployment summary with endpoint URLs, container image details, configuration notes, and production checklist. Save to report bus.
+1. **Env Check** -- Detect project structure, verify dependencies, confirm the LLM integration works locally.
+2. **Application Scaffolding** -- Generate deployment target code. For Streamlit: chat UI with pending_question state management, proper caching, and optional code sandbox. For API: FastAPI with `/predict` and `/health`. For Docker: multi-stage build.
+3. **Configuration** -- Set up environment variables, rate limiting, CORS, logging, caching rules, and Streamlit config.
+4. **Deploy** -- Start locally and smoke test. Verify Streamlit chat handles multiple input sources without duplicates.
+5. **Report** -- Deployment summary with endpoint URLs, configuration notes, production checklist.
 
 ## Report Bus Integration
 

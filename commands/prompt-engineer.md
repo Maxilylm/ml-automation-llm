@@ -42,7 +42,16 @@ Systematic prompt optimization workflow. Design, iterate, and test prompts.
    - Summarization: length constraints, focus areas
    - QA: context handling, "I don't know" behavior
    - Code: language, style guide, error handling expectations
-3. Save baseline as `prompts/v1_baseline.prompt`
+3. **Prompt Quality Audit:**
+   - Run `audit_system_prompt()` from llm_utils on the generated system prompt
+   - Check for common anti-patterns that degrade output quality:
+     - "If the context doesn't contain the answer, say so honestly" → causes excessive hedging. LLM says "context doesn't contain X" even when it does.
+     - Generic persona ("You are a helpful assistant") → adds no value. Define specific role and domain expertise.
+     - Negative-only instructions ("don't hallucinate") without positive alternatives → model doesn't know what to do instead.
+     - Vague length instructions ("be concise") → specify exact format: "2-3 sentences" or "max 5 bullet points."
+   - Apply fixes for any detected anti-patterns before proceeding to evaluation
+   - Key principle: LLMs take instructions literally. Be specific about what NOT to do, but always pair with what TO do instead.
+4. Save baseline as `prompts/v1_baseline.prompt`
 
 ### Stage 3: Few-Shot Example Selection (if eval-dataset provided)
 
@@ -69,6 +78,8 @@ For each iteration (up to `--iterations`):
    - Adjust few-shot examples for failed categories
    - Try chain-of-thought for reasoning failures
    - Refine output format instructions
+   - Run `audit_system_prompt()` on each variant before testing — catch anti-patterns early
+   - If the LLM is over-hedging (saying "I don't have information" when it does), check for overly cautious safety instructions and soften them with positive framing
 
 3. **A/B test** variant vs. current best:
    - Run both prompts on eval dataset
