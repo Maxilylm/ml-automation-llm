@@ -37,7 +37,22 @@ Based on `--target`:
    - `/v1/completions` endpoint (POST) — completion API
    - Request/response models with Pydantic
    - Token counting and usage tracking
-   - Rate limiting middleware
+   - **slowapi rate limiting** (v1.1.0) — per-route limits with `429 Too Many Requests` + `Retry-After` header:
+     ```python
+     from slowapi import Limiter, _rate_limit_exceeded_handler
+     from slowapi.util import get_remote_address
+     from slowapi.errors import RateLimitExceeded
+
+     limiter = Limiter(key_func=get_remote_address)
+     app = FastAPI()
+     app.state.limiter = limiter
+     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+     @app.post("/v1/chat/completions")
+     @limiter.limit(f"{config['rate_limit_rpm']}/minute")
+     async def chat_completions(request: Request, body: ChatRequest):
+         ...
+     ```
    - Request logging to `logs/requests.jsonl`
 2. Generate `src/llm_service.py`:
    - Model loading (API client or local model)

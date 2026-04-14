@@ -8,7 +8,7 @@ user_invocable: true
 
 # LLM Deploy
 
-Deploy LLM-powered applications to production. Supports FastAPI/Flask REST endpoints, Streamlit chat UI, and Docker containerization. Includes health check endpoints, request/response logging, token usage tracking, rate limiting configuration, and basic monitoring setup.
+Deploy LLM-powered applications to production. Supports FastAPI/Flask REST endpoints, Streamlit chat UI, and Docker containerization. Includes health check endpoints, request/response logging, token usage tracking, **slowapi-based rate limiting** (v1.1.0), and basic monitoring setup.
 
 ## When to Use
 
@@ -25,12 +25,34 @@ When deploying as a Streamlit chat UI, these patterns prevent common issues:
 - **Vector store**: for RAG apps with <10K chunks, use in-memory search (`search_in_memory()`) to avoid SQLite broken pipe errors entirely.
 - **Multi-pass**: for analytics chatbots, use a two-pass architecture (retrieve + optional sandboxed code execution) to handle ad-hoc questions that pre-built chunks can't answer.
 
+## Rate Limiting with slowapi (v1.1.0)
+
+For FastAPI deployments, use `slowapi` for production-grade rate limiting instead of custom middleware:
+
+```python
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.post("/v1/chat/completions")
+@limiter.limit("60/minute")
+async def chat_completions(request: Request, body: ChatRequest):
+    ...
+```
+
+Add `slowapi` to generated `requirements.txt`. The rate limit is configurable via `deploy_config.json` `rate_limit_rpm` field. Returns `429 Too Many Requests` with `Retry-After` header when exceeded.
+
 ## Workflow
 
-1. **Env Check** -- Detect project structure, verify dependencies, confirm the LLM integration works locally.
-2. **Application Scaffolding** -- Generate deployment target code. For Streamlit: chat UI with pending_question state management, proper caching, and optional code sandbox. For API: FastAPI with `/predict` and `/health`. For Docker: multi-stage build.
-3. **Configuration** -- Set up environment variables, rate limiting, CORS, logging, caching rules, and Streamlit config.
-4. **Deploy** -- Start locally and smoke test. Verify Streamlit chat handles multiple input sources without duplicates.
+1. **Env Check** -- Detect project structure, verify dependencies (including `slowapi`), confirm the LLM integration works locally.
+2. **Application Scaffolding** -- Generate deployment target code. For Streamlit: chat UI with pending_question state management, proper caching, and optional code sandbox. For API: FastAPI with `/v1/chat/completions`, `/v1/completions`, and `/health`, with slowapi rate limiting. For Docker: multi-stage build.
+3. **Configuration** -- Set up environment variables, slowapi rate limiting, CORS, logging, caching rules, and Streamlit config.
+4. **Deploy** -- Start locally and smoke test. Verify Streamlit chat handles multiple input sources without duplicates. Verify rate limiting returns 429 on excess requests.
 5. **Report** -- Deployment summary with endpoint URLs, configuration notes, production checklist.
 
 ## Report Bus Integration

@@ -19,8 +19,14 @@ Benchmark LLM performance on standard tasks. Compare models on quality, latency,
 
 1. Check if `ml_utils.py` exists in `src/` — if missing, copy from core plugin (`~/.claude/plugins/*/templates/ml_utils.py`)
 2. Check if `llm_utils.py` exists in `src/` — if missing, copy from this plugin's `templates/llm_utils.py`
-3. Verify model API access (check for API keys in env: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
-4. If custom `--dataset` provided, validate format
+3. **Load provider config** (v1.1.0) — read `config/llm_benchmark_config.json` if present, else use defaults
+4. **Verify API keys** for each model under test:
+   - `claude-*` models → check `ANTHROPIC_API_KEY` env var, initialize `anthropic.Anthropic()`
+   - `gpt-*` models → check `OPENAI_API_KEY` env var, initialize `openai.OpenAI()`
+   - `http://` / `localhost` models → verify endpoint responds to `GET /health`
+   - If a key is missing, warn and skip that model (don't fail the entire benchmark)
+5. Install SDKs if missing: `pip install anthropic openai` as needed
+6. If custom `--dataset` provided, validate format
 
 ### Stage 1: Task Setup
 
@@ -55,11 +61,14 @@ For each task in `--tasks`:
 
 For each task and model:
 
-1. Run inference on all dataset samples (batch with rate limiting)
-2. Record per-sample: prediction, latency_ms, input_tokens, output_tokens
+1. **Send real API requests** (v1.1.0) to each provider:
+   - Anthropic: `client.messages.create(model=model, messages=[...], max_tokens=...)`
+   - OpenAI: `client.chat.completions.create(model=model, messages=[...])`
+   - Local: POST to `{base_url}/v1/chat/completions`
+2. Record per-sample: prediction, latency_ms, input_tokens, output_tokens (from API response usage fields)
 3. Compute task-specific metrics
 4. Calculate cost: `(input_tokens * input_price + output_tokens * output_price) / 1000`
-5. Handle errors gracefully (timeout, rate limit, API errors)
+5. Handle errors with exponential backoff: rate limits (wait + retry, max 3 retries), timeouts (skip sample), API errors (log and continue)
 
 ### Stage 3: Comparison (if --compare provided)
 

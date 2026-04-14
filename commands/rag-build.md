@@ -65,12 +65,25 @@ When using domain chunking, call `build_structured_chunks()` from `llm_utils` to
 
 **Redundant representations are required.** Every statistical chunk must include both percentages AND raw counts. For example: "74.2% survival rate (233 of 314 female passengers)". LLMs are more confident when context provides multiple representations of the same fact — a percentage alone forces the model to guess the denominator, reducing answer quality.
 
-### Stage 3: Embedding Generation
+### Stage 3: Embedding Generation (v1.1.0 — sentence-transformers default)
 
-1. Load embedding model (`--embedding-model`)
-2. Generate embeddings for all chunks (batch processing)
-3. Normalize embeddings (L2 norm)
-4. Report: embedding dimension, generation time, tokens processed
+1. Load embedding model — default to `sentence-transformers` (`all-MiniLM-L6-v2`) instead of TF-IDF:
+   ```python
+   try:
+       from sentence_transformers import SentenceTransformer
+       model = SentenceTransformer(embedding_model or "all-MiniLM-L6-v2")
+       embeddings = model.encode(chunk_texts, normalize_embeddings=True, show_progress_bar=True)
+   except ImportError:
+       # Fallback: TF-IDF (sparse, token-matching only — lower retrieval quality)
+       print("WARNING: sentence-transformers not installed, falling back to TF-IDF")
+       from sklearn.feature_extraction.text import TfidfVectorizer
+       vectorizer = TfidfVectorizer(max_features=5000)
+       embeddings = vectorizer.fit_transform(chunk_texts).toarray()
+   ```
+2. Generate embeddings for all chunks (batch processing with `batch_size=64` for memory efficiency)
+3. Normalize embeddings (L2 norm) — `sentence-transformers` does this with `normalize_embeddings=True`
+4. Report: embedding model name, embedding dimension, generation time, tokens processed
+5. Add `sentence-transformers` to generated `requirements.txt`
 
 ### Stage 4: Vector Store Indexing
 

@@ -17,6 +17,26 @@ Build a complete Retrieval-Augmented Generation pipeline. Supports three chunkin
 - You need to choose the right vector backend for your scale (in-memory for small KBs, DB for large).
 - You want domain-structured chunks that each answer one category of question.
 
+## Embedding Model Selection (v1.1.0)
+
+Use **sentence-transformers** as the default embedding model instead of TF-IDF. Sentence-transformers produce dense semantic vectors that capture meaning ("car" ≈ "automobile"), whereas TF-IDF only matches exact tokens.
+
+| Model | Dimensions | Speed | Quality | When to Use |
+|-------|-----------|-------|---------|-------------|
+| `all-MiniLM-L6-v2` (default) | 384 | Fast | Good | General-purpose, <10K chunks |
+| `all-mpnet-base-v2` | 768 | Medium | Better | When quality matters more than speed |
+| `BAAI/bge-small-en-v1.5` | 384 | Fast | Good | Alternative to MiniLM |
+| TF-IDF fallback | sparse | Instant | Basic | Only if `sentence-transformers` cannot be installed |
+
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("all-MiniLM-L6-v2")
+embeddings = model.encode(chunks, normalize_embeddings=True, show_progress_bar=True)
+```
+
+Install: `pip install sentence-transformers`. If installation fails (e.g., no torch), fall back to TF-IDF with a warning.
+
 ## Key Design Decisions
 
 | Chunk count | Recommended backend | Why |

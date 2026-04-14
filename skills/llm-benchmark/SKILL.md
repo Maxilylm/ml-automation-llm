@@ -17,11 +17,39 @@ Benchmark one or more LLM models on standard NLP tasks including question answer
 - You are evaluating a new model release against your current production model.
 - You need a structured benchmark report for stakeholder review.
 
+## Real API Call Support (v1.1.0)
+
+Benchmarks now make real API calls to LLM providers. Configure API keys in the environment or project config:
+
+```json
+// config/llm_benchmark_config.json
+{
+  "providers": {
+    "anthropic": {"api_key_env": "ANTHROPIC_API_KEY", "base_url": null},
+    "openai": {"api_key_env": "OPENAI_API_KEY", "base_url": null},
+    "local": {"api_key_env": null, "base_url": "http://localhost:8000/v1"}
+  },
+  "defaults": {
+    "max_samples": 50,
+    "timeout_seconds": 60,
+    "max_retries": 3,
+    "retry_delay_seconds": 5
+  }
+}
+```
+
+Model identifiers are resolved to providers automatically:
+- `claude-*` → Anthropic SDK (`anthropic.Anthropic`)
+- `gpt-*` → OpenAI SDK (`openai.OpenAI`)
+- `http://...` or `localhost` → OpenAI-compatible local endpoint
+
+If an API key is missing for a provider, skip that model with a warning instead of failing the entire benchmark.
+
 ## Workflow
 
-1. **Env Check** -- Verify API keys for each model under test, confirm task datasets are available, install metric dependencies.
+1. **Env Check** -- Verify API keys for each model under test (check env vars per provider config), confirm task datasets are available, install metric dependencies (`anthropic`, `openai` SDKs as needed).
 2. **Task Setup** -- Load or generate evaluation datasets for each requested task (QA pairs, summarization sources, classification examples). Configure sampling and batch sizes.
-3. **Run Benchmarks** -- For each model-task combination: send requests, measure wall-clock latency, record token counts, compute quality metrics (accuracy, BLEU, ROUGE, F1). Handle rate limits and retries.
+3. **Run Benchmarks** -- For each model-task combination: send **real API requests** to the provider, measure wall-clock latency, record token counts from the API response, compute quality metrics (accuracy, BLEU, ROUGE, F1). Handle rate limits with exponential backoff and retries.
 4. **Comparison** -- Build cross-model comparison tables ranked by quality, latency, and cost-per-1K-tokens. Highlight Pareto-optimal models.
 5. **Report** -- Generate a benchmark report with tables, charts, and a recommendation summary. Save to report bus.
 
