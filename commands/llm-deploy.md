@@ -22,8 +22,44 @@ Deploy LLM applications as API endpoints, Streamlit chat UIs, or Docker containe
    - Check for fine-tuned model in `models/`
    - Check for RAG pipeline in `src/rag_pipeline.py`
    - Check for prompt templates in `prompts/`
-   - Check for API keys in environment
-4. Report: detected setup, recommended deployment target
+4. **Credential check — HARD FAIL if missing:**
+   ```python
+   import os
+   needed = []
+   if model.startswith("claude"):
+       needed = [("ANTHROPIC_API_KEY", "anthropic")]
+   elif model.startswith("gpt") or model.startswith("o1") or model.startswith("o3"):
+       needed = [("OPENAI_API_KEY", "openai")]
+   for env_var, pkg in needed:
+       if not os.environ.get(env_var):
+           raise SystemExit(
+               f"ERROR: {env_var} is not set.\n"
+               f"Set it with: export {env_var}=<your-key>\n"
+               "Deployment aborted — the service would fail at runtime without credentials."
+           )
+   # Verify the key actually works with a minimal API call before proceeding
+   if "ANTHROPIC_API_KEY" in [v for v, _ in needed]:
+       import anthropic
+       try:
+           anthropic.Anthropic().messages.create(
+               model=model, max_tokens=5,
+               messages=[{"role": "user", "content": "ping"}]
+           )
+           print(f"✓ ANTHROPIC_API_KEY verified — credential works.")
+       except anthropic.AuthenticationError:
+           raise SystemExit("ERROR: ANTHROPIC_API_KEY is set but invalid. Check the key value.")
+   elif "OPENAI_API_KEY" in [v for v, _ in needed]:
+       import openai
+       try:
+           openai.OpenAI().chat.completions.create(
+               model=model, max_tokens=5,
+               messages=[{"role": "user", "content": "ping"}]
+           )
+           print(f"✓ OPENAI_API_KEY verified — credential works.")
+       except openai.AuthenticationError:
+           raise SystemExit("ERROR: OPENAI_API_KEY is set but invalid. Check the key value.")
+   ```
+5. Report: detected setup, recommended deployment target
 
 ### Stage 1: Application Scaffolding
 
@@ -163,6 +199,78 @@ Based on `--target`:
 2. Generate `tests/test_smoke.py`:
    - End-to-end smoke test (send request, verify response)
    - Latency check (response under threshold)
+
+### Stage 4b: Live Inference Verification
+
+**RUN the smoke test** — do not just generate it. After the application code is written:
+
+**For API target:**
+```python
+import subprocess, time, requests, sys
+
+proc = subprocess.Popen(
+    ["uvicorn", "src.app:app", "--host", "127.0.0.1", f"--port", str(port)],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+)
+time.sleep(3)  # wait for startup
+
+errors = []
+try:
+    # 1. Health check
+    r = requests.get(f"http://127.0.0.1:{port}/health", timeout=5)
+    if r.status_code != 200:
+        errors.append(f"Health check failed: HTTP {r.status_code}")
+    else:
+        print("✓ /health — OK")
+
+    # 2. Inference call
+    r = requests.post(f"http://127.0.0.1:{port}/v1/chat/completions", json={
+        "messages": [{"role": "user", "content": "Say hello in one word."}],
+        "max_tokens": 10
+    }, timeout=30)
+    if r.status_code != 200:
+        errors.append(f"Inference call failed: HTTP {r.status_code} — {r.text[:200]}")
+    else:
+        print(f"✓ /v1/chat/completions — OK (response: {r.json()})")
+except Exception as e:
+    errors.append(f"Connection error: {e}")
+finally:
+    proc.terminate()
+    proc.wait()
+
+if errors:
+    print("INFERENCE VERIFICATION FAILED:")
+    for err in errors:
+        print(f"  - {err}")
+    print("Fix the errors above before considering this deployment complete.")
+else:
+    print("✓ Live inference verified — service starts and responds correctly.")
+```
+
+**For Streamlit target:**
+```python
+import subprocess, time, sys
+
+proc = subprocess.Popen(
+    ["streamlit", "run", "src/streamlit_app.py",
+     "--server.headless", "true", "--server.port", str(port)],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+)
+time.sleep(5)
+returncode = proc.poll()
+if returncode is not None:
+    stderr = proc.stderr.read().decode()
+    print(f"STREAMLIT STARTUP FAILED (exit {returncode}):\n{stderr}")
+    print("Fix the errors above before considering this deployment complete.")
+else:
+    proc.terminate()
+    proc.wait()
+    print("✓ Streamlit app starts without errors.")
+```
+
+**For Docker target:** Run `docker compose up --build -d`, wait 10s, call health endpoint, then `docker compose down`.
+
+If verification fails, re-spawn developer agent with the error output and ask it to fix `src/app.py` (or `src/streamlit_app.py`). Max 2 fix iterations before reporting as failed.
 
 ### Stage 5: Report
 

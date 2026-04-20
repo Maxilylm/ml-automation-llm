@@ -20,6 +20,24 @@ Systematic prompt optimization workflow. Design, iterate, and test prompts.
 1. Check if `ml_utils.py` exists in `src/` — if missing, copy from core plugin (`~/.claude/plugins/*/templates/ml_utils.py`)
 2. Check if `llm_utils.py` exists in `src/` — if missing, copy from this plugin's `templates/llm_utils.py`
 3. If `--eval-dataset` provided, verify file exists and is valid JSONL
+4. **Credential check — HARD FAIL if missing:**
+   ```python
+   import os, anthropic
+   if not os.environ.get("ANTHROPIC_API_KEY"):
+       raise SystemExit(
+           "ERROR: ANTHROPIC_API_KEY is not set.\n"
+           "Prompt optimization requires live LLM calls to evaluate prompt variants.\n"
+           "Set it with: export ANTHROPIC_API_KEY=<your-key>"
+       )
+   try:
+       anthropic.Anthropic().messages.create(
+           model="claude-haiku-4-5-20251001", max_tokens=5,
+           messages=[{"role": "user", "content": "ping"}]
+       )
+       print("✓ ANTHROPIC_API_KEY verified — credential works.")
+   except anthropic.AuthenticationError:
+       raise SystemExit("ERROR: ANTHROPIC_API_KEY is set but invalid.")
+   ```
 
 ### Stage 1: Task Analysis
 
@@ -112,3 +130,32 @@ save_agent_report("prompt-engineer", {
 Write all prompt versions to `prompts/` directory.
 Print comparison table of all versions with metrics.
 Print the winning prompt in full.
+
+### Stage 5b: Live Inference Verification
+
+Run one final live call with the winning prompt to confirm it works end-to-end before completing:
+
+```python
+import anthropic, json
+
+with open(best_prompt_path) as f:
+    best_prompt = f.read()
+
+# Use the first sample from eval-dataset if available, otherwise a synthetic input
+test_input = eval_samples[0]["input"] if eval_samples else "Test input: summarise this workflow."
+
+client = anthropic.Anthropic()
+try:
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=256,
+        messages=[{"role": "user", "content": best_prompt.replace("{input}", test_input)}]
+    )
+    output = response.content[0].text
+    print(f"✓ Live inference verified with winning prompt.")
+    print(f"  Input: {test_input[:100]}")
+    print(f"  Output: {output[:200]}")
+except Exception as e:
+    print(f"WARNING: Live inference check failed: {e}")
+    print("The winning prompt was saved, but verify it manually before deploying.")
+```

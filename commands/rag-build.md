@@ -22,7 +22,27 @@ Build a RAG pipeline from a document collection.
 1. Check if `ml_utils.py` exists in `src/` — if missing, copy from core plugin (`~/.claude/plugins/*/templates/ml_utils.py`)
 2. Check if `llm_utils.py` exists in `src/` — if missing, copy from this plugin's `templates/llm_utils.py`
 3. Verify documents directory exists and contains readable files
-4. Check required packages based on `--vector-store`:
+4. **Credential check — HARD FAIL if missing:**
+   ```python
+   import os, anthropic
+
+   api_key = os.environ.get("ANTHROPIC_API_KEY")
+   if not api_key:
+       raise SystemExit(
+           "ERROR: ANTHROPIC_API_KEY is not set.\n"
+           "Set it with: export ANTHROPIC_API_KEY=<your-key>\n"
+           "The RAG pipeline's generate() step requires a live LLM — cannot proceed without credentials."
+       )
+   try:
+       anthropic.Anthropic().messages.create(
+           model="claude-haiku-4-5-20251001", max_tokens=5,
+           messages=[{"role": "user", "content": "ping"}]
+       )
+       print("✓ ANTHROPIC_API_KEY verified — credential works.")
+   except anthropic.AuthenticationError:
+       raise SystemExit("ERROR: ANTHROPIC_API_KEY is set but invalid. Check the key value.")
+   ```
+5. Check required packages based on `--vector-store`:
    - memory: `numpy` (no external DB needed)
    - chroma: `chromadb`
    - faiss: `faiss-cpu` or `faiss-gpu`
@@ -181,6 +201,32 @@ For ad-hoc computation that doesn't fit a named tool, include a `run_code` tool 
 3. Generate basic test script `tests/test_rag.py`
 
 > **Streamlit integration:** If deploying as a Streamlit app, cache the embedding model with `@st.cache_resource` but never cache database connections. Database clients hold connection state that goes stale across Streamlit reruns.
+
+### Stage 6b: End-to-End Inference Test
+
+After `src/rag_pipeline.py` is written, run a live end-to-end test through the full pipeline — retrieval + LLM generation — to verify credentials, prompt formatting, and the generate() path all work before calling the build complete.
+
+```python
+import sys
+sys.path.insert(0, "src")
+from rag_pipeline import ingest, rag
+
+# Ingest a small sample (first 3 docs only) to keep the test fast
+ingest(documents_path, max_docs=3)
+
+test_question = "What is this document collection about? Summarise in one sentence."
+try:
+    result = rag(test_question)
+    if not result or not isinstance(result, str) or len(result) < 5:
+        raise ValueError(f"Unexpected response: {result!r}")
+    print(f"✓ End-to-end inference OK\n  Q: {test_question}\n  A: {result[:200]}")
+except Exception as e:
+    print(f"INFERENCE TEST FAILED: {type(e).__name__}: {e}")
+    print("Fix rag_pipeline.py before proceeding — the pipeline does not work end-to-end.")
+    # Re-spawn developer agent with the error to fix generate() / credentials
+```
+
+If the test fails, re-spawn developer agent with the full traceback. Max 2 fix iterations.
 
 ### Stage 7: Report
 
