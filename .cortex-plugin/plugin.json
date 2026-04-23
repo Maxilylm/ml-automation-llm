@@ -1,0 +1,27 @@
+{
+  "name": "spark-llm",
+  "version": "1.2.0",
+  "description": "LLM and GenAI automation extension for spark. Prompt engineering, RAG pipelines, LLM evaluation, fine-tuning workflows, and GenAI deployment.",
+  "author": {
+    "name": "Maximo Lorenzo y Losada"
+  },
+  "repository": "https://github.com/Maxilylm/ml-automation-llm",
+  "license": "MIT",
+  "keywords": [
+    "llm",
+    "genai",
+    "prompt-engineering",
+    "rag",
+    "llm-evaluation",
+    "fine-tuning",
+    "spark-extension",
+    "cortex-code"
+  ],
+  "dependencies": ["spark-core"],
+  "cortex": {
+    "agents_dir": "agents",
+    "skills_dir": "skills",
+    "commands_dir": "commands",
+    "hooks_dir": "hooks"
+  }
+}
