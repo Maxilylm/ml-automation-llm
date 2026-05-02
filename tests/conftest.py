@@ -9,7 +9,7 @@ def mock_llm_response():
         "id": "chatcmpl-123456",
         "object": "text_completion",
         "created": 1234567890,
-        "model": "gpt-4",
+        "model": "claude-opus-4-7",
         "choices": [
             {
                 "index": 0,
