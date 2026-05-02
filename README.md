@@ -1,10 +1,10 @@
 # spark-llm
 
-LLM and GenAI automation extension for [ml-automation](https://github.com/Maxilylm/ml-automation-core).
+LLM and GenAI automation extension for [ml-automation](https://github.com/BLEND360/ml-automation-core).
 
 ## Prerequisites
 
-- [ml-automation](https://github.com/Maxilylm/ml-automation-core) core plugin (>= v1.8.0)
+- [ml-automation](https://github.com/BLEND360/ml-automation-core) core plugin (>= v1.8.0)
 - Claude Code CLI
 - LLM API access (OpenAI, Anthropic, or local models) for evaluation and deployment commands
 
