@@ -6,8 +6,6 @@ color: "#7C3AED"
 tools: [Read, Write, Bash(*), Glob, Grep]
 extends: spark
 routing_keywords: [prompt engineering, prompt optimization, prompt template, system prompt, few-shot, chain of thought, prompt testing, prompt iteration]
-hooks_into:
-  - after-eda
 ---
 
 # Prompt Engineer
