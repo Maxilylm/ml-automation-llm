@@ -18,11 +18,11 @@ claude plugin add /path/to/spark-llm
 
 ### Agents
 
-| Agent | Purpose | Hooks Into |
-|---|---|---|
-| `llm-evaluator` | LLM output quality, hallucination detection, BLEU/ROUGE/BERTScore | `after-evaluation` |
-| `prompt-engineer` | Prompt design, optimization, A/B testing | `after-eda` |
-| `rag-builder` | RAG pipeline construction, vector store setup, retrieval evaluation | *(direct invocation)* |
+| Agent | Purpose |
+|---|---|
+| `llm-evaluator` | LLM output quality, hallucination detection, BLEU/ROUGE/BERTScore |
+| `prompt-engineer` | Prompt design, optimization, A/B testing |
+| `rag-builder` | RAG pipeline construction, vector store setup, retrieval evaluation |
 
 ### Commands
 

@@ -6,8 +6,6 @@ color: "#8B5CF6"
 tools: [Read, Write, Bash(*), Glob, Grep]
 extends: spark
 routing_keywords: [llm evaluation, llm metrics, hallucination detection, bleu score, rouge score, bertscore, llm quality, genai evaluation, prompt evaluation]
-hooks_into:
-  - after-evaluation
 ---
 
 # LLM Evaluator
